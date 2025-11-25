@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  data-fetch:
+    build:
+      context: .
+      dockerfile: components/data_fetcher/Dockerfile
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATA_DIR=data
+    restart: unless-stopped
+
+  preprocess:
+    build:
+      context: .
+      dockerfile: components/preprocess/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./processed_data:/app/processed_data
+    environment:
+      - DATA_DIR=data
+      - PROCESSED_DIR=processed_data
+    depends_on:
+      - data-fetch
+    restart: unless-stopped
+
+  train:
+    build:
+      context: .
+      dockerfile: components/train/Dockerfile
+    volumes:
+      - ./processed_data:/opt/ml/input/data/train
+      - ./models:/opt/ml/model
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - preprocess
+    restart: unless-stopped
+
+  evaluate:
+    build:
+      context: .
+      dockerfile: components/evaluate/Dockerfile
+    volumes:
+      - ./models:/app/models
+      - ./evaluation:/app/evaluation
+    environment:
+      - MODELS_DIR=models
+      - EVAL_DIR=evaluation
+    depends_on:
+      - train
+    restart: unless-stopped
+
+  model-registry:
+    build:
+      context: .
+      dockerfile: components/model_registry/Dockerfile
+    volumes:
+      - ./models:/app/models
+      - ./registry:/app/registry
+    environment:
+      - REGISTRY_DIR=registry
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+    depends_on:
+      - evaluate
+    restart: unless-stopped
+
+volumes:
+  data:
+  processed_data:
+  models:
+  evaluation:
+  registry:

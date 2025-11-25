@@ -1,0 +1,22 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "Installing dependencies..."
+      - pip install --upgrade pip
+      - pip install boto3 sagemaker==2.224.1
+      - |
+        if [ -f requirements.txt ]; then
+          pip install -r requirements.txt
+        fi
+
+  build:
+    commands:
+      - echo "Running SageMaker Pipeline..."
+      - python pipeline.py
+
+  post_build:
+    commands:
+      - echo "Pipeline execution completed."
+

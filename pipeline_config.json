@@ -1,0 +1,35 @@
+{
+  "pipeline": {
+    "name": "mlops-pipeline",
+    "description": "End-to-end ML Pipeline with Data Fetch, Preprocess, Train, Evaluate, and Registry",
+    "region": "us-east-1"
+  },
+  "compute": {
+    "processing_instance_type": "ml.m5.xlarge",
+    "training_instance_type": "ml.m5.large",
+    "processing_instance_count": 1,
+    "training_instance_count": 1
+  },
+  "storage": {
+    "s3_bucket": "mlops-data01",
+    "bucket_prefix": "mlops-pipeline",
+    "input_data_path": "Heart_Disease_Prediction.csv",
+    "processed_data_path": "data/processed",
+    "models_path": "models",
+    "evaluation_path": "evaluation",
+    "registry_path": "registry"
+  },
+  "images": {
+    "data_fetcher": "<ecr-repo>/data-fetcher:latest",
+    "preprocess": "<ecr-repo>/preprocess:latest",
+    "train": "<ecr-repo>/train:latest",
+    "evaluate": "<ecr-repo>/evaluate:latest",
+    "model_registry": "<ecr-repo>/model-registry:latest"
+  },
+  "tags": {
+    "Project": "MLOps",
+    "Environment": "Production",
+    "Owner": "MLOps Team"
+  }
+}
+
