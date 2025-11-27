@@ -2,21 +2,64 @@ version: 0.2
 
 phases:
   install:
+    runtime-versions:
+      python: 3.10
     commands:
-      - echo "Installing dependencies..."
+      - echo "Installing Python dependencies..."
       - pip install --upgrade pip
       - pip install boto3 sagemaker==2.224.1
       - |
         if [ -f requirements.txt ]; then
           pip install -r requirements.txt
         fi
+      - echo "Getting AWS Account ID..."
+      - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - export AWS_REGION=${AWS_REGION:-us-east-1}
+      - export ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+      - export REPO_NAME="ml-pipeline-components"
+      - echo "ECR Registry: ${ECR_REGISTRY}"
+      - echo "Logging into AWS ECR..."
+      - aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+      - |
+        # Create ECR repository if it doesn't exist
+        aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_REGION} || \
+        aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_REGION}
+
+  pre_build:
+    commands:
+      - echo "Starting Docker builds for components..."
+      - echo "Components to build: data_fetcher, preprocess, train, evaluate, model_registry"
 
   build:
     commands:
-      - echo "Running SageMaker Pipeline..."
+      - |
+        # Build and push all components
+        COMPONENTS=("data_fetcher" "preprocess" "train" "evaluate" "model_registry")
+        for component in "${COMPONENTS[@]}"; do
+          echo "Building Docker image for ${component}..."
+          IMAGE_URI="${ECR_REGISTRY}/${REPO_NAME}:${component}"
+          
+          # Build from project root (.) using component's Dockerfile (-f flag)
+          # Build context must be root because Dockerfiles need requirements.txt and component paths
+          docker build -f "./components/${component}/Dockerfile" -t ${component} .
+          docker tag ${component}:latest ${IMAGE_URI}
+          
+          echo "Pushing ${IMAGE_URI}..."
+          docker push ${IMAGE_URI}
+          echo "${component} pushed successfully!"
+        done
+
+      - echo "Setting up environment variables for pipeline..."
+      - export SAGEMAKER_ROLE=${SAGEMAKER_ROLE:-arn:aws:iam::269897083978:role/SageMakerExecRole-pro-ai}
+      - export S3_BUCKET=${S3_BUCKET:-mlops-data01}
+      - export AWS_REGION=${AWS_REGION:-us-east-1}
+      - export ECR_REGISTRY="${ECR_REGISTRY}"
+
+      - echo "Triggering SageMaker pipeline..."
       - python pipeline.py
 
   post_build:
     commands:
-      - echo "Pipeline execution completed."
-
+      - echo "All builds and SageMaker pipeline execution completed."
+      - echo "ECR Registry: ${ECR_REGISTRY}"
+      - echo "Repository: ${REPO_NAME}"
