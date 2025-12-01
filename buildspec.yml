@@ -6,6 +6,7 @@ phases:
       python: 3.10
     commands:
       - echo "Installing Python dependencies..."
+      - cat buildspec.yml
       - pip install --upgrade pip
       - pip install boto3 sagemaker==2.224.1
       - if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
@@ -14,10 +15,10 @@ phases:
       - export AWS_REGION=${AWS_REGION:-us-east-1}
       - export ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
       - export REPO_NAME="ml-pipeline-components"
-      - echo "ECR Registry: ${ECR_REGISTRY}"
+      - echo "ECR Registry configured"
       - echo "Logging into AWS ECR..."
-      - bash -c "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
-      - bash -c "aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_REGION} || aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_REGION}"
+      - bash -c 'aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}'
+      - bash -c 'aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_REGION} || aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_REGION}'
 
   pre_build:
     commands:
@@ -49,5 +50,5 @@ phases:
   post_build:
     commands:
       - echo "All builds and SageMaker pipeline execution completed."
-      - echo "ECR Registry: ${ECR_REGISTRY}"
-      - echo "Repository: ${REPO_NAME}"
+      - echo "ECR Registry configured"
+      - echo "Repository: ml-pipeline-components"
