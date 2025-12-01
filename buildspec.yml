@@ -6,19 +6,25 @@ phases:
       python: 3.10
     commands:
       - echo "Installing Python dependencies..."
-      - cat buildspec.yml
       - pip install --upgrade pip
       - pip install boto3 sagemaker==2.224.1
-      - if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - |
+        if [ -f requirements.txt ]; then
+          pip install -r requirements.txt
+        fi
       - echo "Getting AWS Account ID..."
-      - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-      - export AWS_REGION=${AWS_REGION:-us-east-1}
-      - export ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-      - export REPO_NAME="ml-pipeline-components"
+      - |
+        export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        export AWS_REGION=${AWS_REGION:-us-east-1}
+        export ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        export REPO_NAME="ml-pipeline-components"
       - echo "ECR Registry configured"
       - echo "Logging into AWS ECR..."
-      - bash -c 'aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}'
-      - bash -c 'aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_REGION} || aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_REGION}'
+      - |
+        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+      - |
+        aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_REGION} || \
+        aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_REGION}
 
   pre_build:
     commands:
@@ -28,7 +34,6 @@ phases:
   build:
     commands:
       - |
-        # Build and push all components
         COMPONENTS=("data_fetcher" "preprocess" "train" "evaluate" "model_registry")
         for component in "${COMPONENTS[@]}"; do
           echo "Building Docker image for ${component}..."
@@ -40,10 +45,11 @@ phases:
           echo "${component} pushed successfully!"
         done
       - echo "Setting up environment variables for pipeline..."
-      - export SAGEMAKER_ROLE=${SAGEMAKER_ROLE:-arn:aws:iam::269897083978:role/SageMakerExecRole-pro-ai}
-      - export S3_BUCKET=${S3_BUCKET:-mlops-data01}
-      - export AWS_REGION=${AWS_REGION:-us-east-1}
-      - export ECR_REGISTRY="${ECR_REGISTRY}"
+      - |
+        export SAGEMAKER_ROLE=${SAGEMAKER_ROLE:-arn:aws:iam::269897083978:role/SageMakerExecRole-pro-ai}
+        export S3_BUCKET=${S3_BUCKET:-mlops-data01}
+        export AWS_REGION=${AWS_REGION:-us-east-1}
+        export ECR_REGISTRY="${ECR_REGISTRY}"
       - echo "Triggering SageMaker pipeline..."
       - python pipeline.py
 
