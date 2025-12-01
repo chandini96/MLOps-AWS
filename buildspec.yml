@@ -16,8 +16,8 @@ phases:
       - export REPO_NAME="ml-pipeline-components"
       - echo "ECR Registry: ${ECR_REGISTRY}"
       - echo "Logging into AWS ECR..."
-      - aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
-      - aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_REGION} || aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_REGION}
+      - bash -c "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
+      - bash -c "aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_REGION} || aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_REGION}"
 
   pre_build:
     commands:
