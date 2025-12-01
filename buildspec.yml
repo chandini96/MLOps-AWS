@@ -28,8 +28,8 @@ phases:
 
   pre_build:
     commands:
-      - echo "Starting Docker builds for components..."
-      - echo "Components to build: data_fetcher, preprocess, train, evaluate, model_registry"
+      - echo "Starting Docker builds for components"
+      - echo "Components - data_fetcher, preprocess, train, evaluate, model_registry"
 
   build:
     commands:
@@ -57,4 +57,4 @@ phases:
     commands:
       - echo "All builds and SageMaker pipeline execution completed."
       - echo "ECR Registry configured"
-      - echo "Repository: ml-pipeline-components"
+      - echo "Repository - ml-pipeline-components"
