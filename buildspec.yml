@@ -8,10 +8,7 @@ phases:
       - echo "Installing Python dependencies..."
       - pip install --upgrade pip
       - pip install boto3 sagemaker==2.224.1
-      - |
-        if [ -f requirements.txt ]; then
-          pip install -r requirements.txt
-        fi
+      - if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       - echo "Getting AWS Account ID..."
       - export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - export AWS_REGION=${AWS_REGION:-us-east-1}
@@ -19,9 +16,9 @@ phases:
       - export REPO_NAME="ml-pipeline-components"
       - echo "ECR Registry: ${ECR_REGISTRY}"
       - echo "Logging into AWS ECR..."
-      - aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
       - |
-        # Create ECR repository if it doesn't exist
+        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+      - |
         aws ecr describe-repositories --repository-names ${REPO_NAME} --region ${AWS_REGION} || \
         aws ecr create-repository --repository-name ${REPO_NAME} --region ${AWS_REGION}
 
