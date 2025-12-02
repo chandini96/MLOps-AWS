@@ -219,6 +219,27 @@ def start_execution():
     print(f"🔗 View in console: https://console.aws.amazon.com/sagemaker/home?region={REGION}#/pipelines")
     return execution
 
+def start_existing_pipeline(pipeline_name="MLOpsPipeline"):
+    """
+    Start execution of an existing pipeline without deploying.
+    Useful when only component code changed, not pipeline definition.
+    """
+    print(f"\n🚀 Starting existing pipeline execution: {pipeline_name}")
+    sagemaker_client = boto3.client('sagemaker', region_name=REGION)
+    
+    try:
+        response = sagemaker_client.start_pipeline_execution(
+            PipelineName=pipeline_name
+        )
+        execution_arn = response['PipelineExecutionArn']
+        print(f"✅ Pipeline execution started!")
+        print(f"📋 Execution ARN: {execution_arn}")
+        print(f"🔗 View in console: https://console.aws.amazon.com/sagemaker/home?region={REGION}#/pipelines")
+        return type('Execution', (), {'arn': execution_arn})()
+    except Exception as e:
+        print(f"❌ Error starting pipeline: {e}")
+        raise
+
 def monitor_execution(execution_arn, poll_interval=30):
     """
     Monitor an existing pipeline execution by ARN
@@ -301,10 +322,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SageMaker MLOps Pipeline")
     parser.add_argument("--monitor", type=str, help="Monitor execution by ARN")
     parser.add_argument("--poll", type=int, default=30, help="Polling interval in seconds")
+    parser.add_argument("--execute-only", action="store_true", 
+                       help="Execute existing pipeline without deploying (skip upsert)")
     args = parser.parse_args()
 
     if args.monitor:
         monitor_execution(args.monitor, poll_interval=args.poll)
+    elif args.execute_only:
+        # Execute existing pipeline without deploying
+        exec_obj = start_existing_pipeline(pipeline.name)
+        # Monitor execution
+        monitor_execution(exec_obj.arn, poll_interval=args.poll)
     else:
         # Default behavior: Deploy and start pipeline execution
         # Deploy pipeline (creates/updates definition)
