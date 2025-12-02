@@ -13,10 +13,10 @@ phases:
           pip install -r requirements.txt
         fi
       - |
-        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-        AWS_REGION=${AWS_REGION:-us-east-1}
-        ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        REPO_NAME="ml-pipeline-components"
+        export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        export AWS_REGION=${AWS_REGION:-us-east-1}
+        export ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        export REPO_NAME="ml-pipeline-components"
       - echo "Logging into ECR..."
       - |
         aws ecr get-login-password --region ${AWS_REGION} \
@@ -25,70 +25,91 @@ phases:
   pre_build:
     commands:
       - echo "Detecting changed files..."
-
-      - REBUILD_ALL=false
-      - COMPONENTS_TO_BUILD=""
-      - PIPELINE_CHANGED=false
-
       - |
+        REBUILD_ALL=false
+        COMPONENTS_TO_BUILD=""
+        PIPELINE_CHANGED=false
         BASE_COMMIT=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+        
         if [ -z "$BASE_COMMIT" ]; then
           echo "No previous commit found → rebuilding all components"
           REBUILD_ALL=true
         else
           CHANGED_FILES=$(git diff --name-only $BASE_COMMIT HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          if echo "$CHANGED_FILES" | grep -E "components/.*/Dockerfile|requirements.txt" >/dev/null; then
+            echo "Dockerfile or requirements changed → rebuild all"
+            REBUILD_ALL=true
+          fi
+          
+          if [ "$REBUILD_ALL" = "false" ]; then
+            for comp in data_fetcher preprocess train evaluate model_registry; do
+              if echo "$CHANGED_FILES" | grep "components/$comp/" >/dev/null; then
+                COMPONENTS_TO_BUILD="$COMPONENTS_TO_BUILD $comp"
+              fi
+            done
+          fi
+          
+          if echo "$CHANGED_FILES" | grep "pipeline.py" >/dev/null; then
+            PIPELINE_CHANGED=true
+          fi
         fi
-        echo "Changed files:"
-        echo "$CHANGED_FILES"
-
-      - |
-        if echo "$CHANGED_FILES" | grep -E "components/.*/Dockerfile|requirements.txt" >/dev/null; then
-          echo "Dockerfile or requirements changed → rebuild all"
-          REBUILD_ALL=true
-        fi
-
-      - |
-        if [ "$REBUILD_ALL" = false ]; then
-          for comp in data_fetcher preprocess train evaluate model_registry; do
-            if echo "$CHANGED_FILES" | grep "components/$comp/" >/dev/null; then
-              COMPONENTS_TO_BUILD="$COMPONENTS_TO_BUILD $comp"
-            fi
-          done
-        fi
-
-      - |
-        if echo "$CHANGED_FILES" | grep "pipeline/pipeline.py" >/dev/null; then
-          PIPELINE_CHANGED=true
-        fi
-
-      - echo "Components to rebuild: $COMPONENTS_TO_BUILD"
-      - echo "Pipeline changed: $PIPELINE_CHANGED"
-      - echo "Rebuild all: $REBUILD_ALL"
+        
+        echo "REBUILD_ALL=$REBUILD_ALL" > /tmp/build_vars.sh
+        echo "COMPONENTS_TO_BUILD=\"$COMPONENTS_TO_BUILD\"" >> /tmp/build_vars.sh
+        echo "PIPELINE_CHANGED=$PIPELINE_CHANGED" >> /tmp/build_vars.sh
+        
+        echo "=== Build Summary ==="
+        echo "Components to rebuild: $COMPONENTS_TO_BUILD"
+        echo "Pipeline changed: $PIPELINE_CHANGED"
+        echo "Rebuild all: $REBUILD_ALL"
 
   build:
     commands:
       - echo "Starting build phase..."
-
       - |
-        if [ "$REBUILD_ALL" = true ]; then
+        source /tmp/build_vars.sh
+        if [ "$REBUILD_ALL" = "true" ]; then
           echo "Rebuilding ALL components..."
           COMPONENTS_TO_BUILD="data_fetcher preprocess train evaluate model_registry"
         fi
-
       - |
-        if [ -n "$COMPONENTS_TO_BUILD" ]; then
+        source /tmp/build_vars.sh
+        if [ -n "$COMPONENTS_TO_BUILD" ] && [ "$COMPONENTS_TO_BUILD" != " " ]; then
           for comp in $COMPONENTS_TO_BUILD; do
             echo "Building Docker image for $comp..."
-            docker build -t ${REPO_NAME}-${comp}:latest -f components/$comp/Dockerfile .
-            docker tag ${REPO_NAME}-${comp}:latest ${ECR_REGISTRY}/${REPO_NAME}-${comp}:latest
-            docker push ${ECR_REGISTRY}/${REPO_NAME}-${comp}:latest
+            IMAGE_URI="${ECR_REGISTRY}/${REPO_NAME}:${comp}"
+            docker build -f "./components/${comp}/Dockerfile" -t ${comp} .
+            docker tag ${comp}:latest ${IMAGE_URI}
+            echo "Pushing ${IMAGE_URI}..."
+            docker push ${IMAGE_URI}
+            echo "${comp} pushed successfully!"
           done
         else
           echo "No component changes → using existing ECR images"
         fi
-
-      - echo "Running SageMaker Pipeline..."
-      - python pipeline/pipeline.py
+      - echo "Setting up environment variables for pipeline..."
+      - |
+        export SAGEMAKER_ROLE=${SAGEMAKER_ROLE:-arn:aws:iam::269897083978:role/SageMakerExecRole-pro-ai}
+        export S3_BUCKET=${S3_BUCKET:-mlops-data01}
+        export AWS_REGION=${AWS_REGION:-us-east-1}
+        export ECR_REGISTRY="${ECR_REGISTRY}"
+      - |
+        source /tmp/build_vars.sh
+        echo "Running SageMaker Pipeline..."
+        if [ "$PIPELINE_CHANGED" = "true" ]; then
+          echo "Pipeline definition changed - deploying and executing..."
+          python pipeline.py
+        else
+          if [ -n "$COMPONENTS_TO_BUILD" ] && [ "$COMPONENTS_TO_BUILD" != " " ]; then
+            echo "Component images updated - executing existing pipeline with new images..."
+          else
+            echo "No component changes - executing existing pipeline with latest ECR images..."
+          fi
+          python pipeline.py --execute-only
+        fi
 
   post_build:
     commands:
