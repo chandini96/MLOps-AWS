@@ -8,140 +8,87 @@ phases:
       - echo "Installing Python dependencies..."
       - pip install --upgrade pip
       - pip install boto3 sagemaker==2.224.1
-      - |
-        if [ -f requirements.txt ]; then
-          pip install -r requirements.txt
-        fi
-      - echo "Getting AWS Account ID..."
-      - |
-        export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-        export AWS_REGION=${AWS_REGION:-us-east-1}
-        export ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        export REPO_NAME="ml-pipeline-components"
-      - echo "ECR Registry configured"
-      - echo "Logging into AWS ECR..."
-      - |
-        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+
+      - if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+      - REPO_NAME="ml-pipeline-components"
+
+      - echo "Logging into ECR..."
+      - aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
   pre_build:
     commands:
-      - echo "Checking for code changes to determine which images to build..."
-      - |
-        # Initialize build flags file
-        echo "REBUILD_ALL=false" > /tmp/build_flags.sh
-        echo "COMPONENTS_TO_BUILD=" >> /tmp/build_flags.sh
-        echo "PIPELINE_CHANGED=false" >> /tmp/build_flags.sh
-      - |
-        # Determine base commit for comparison
-        # For CodeBuild, compare with previous commit or use webhook base ref
-        if [ -n "$CODEBUILD_WEBHOOK_BASE_REF" ]; then
-          BASE_COMMIT="$CODEBUILD_WEBHOOK_BASE_REF"
-        elif [ -n "$CODEBUILD_SOURCE_VERSION" ] && [ "$CODEBUILD_SOURCE_VERSION" != "CODEBUILD_SRC_DIR" ]; then
-          # Try to get previous commit
-          BASE_COMMIT=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+      - echo "Detecting changed files..."
+
+      - REBUILD_ALL=false
+      - COMPONENTS_TO_BUILD=""
+      - PIPELINE_CHANGED=false
+
+      - BASE_COMMIT=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+
+      - if [ -z "$BASE_COMMIT" ]; then
+          echo "No previous commit found. Rebuilding everything.";
+          REBUILD_ALL=true;
         else
-          BASE_COMMIT="HEAD~1"
+          CHANGED_FILES=$(git diff --name-only $BASE_COMMIT HEAD)
         fi
-        
-        # Get changed files
-        if [ -n "$BASE_COMMIT" ] && [ "$BASE_COMMIT" != "HEAD" ]; then
-          CHANGED_FILES=$(git diff --name-only ${BASE_COMMIT} HEAD 2>/dev/null || echo "")
-          echo "Comparing changes from: ${BASE_COMMIT} to HEAD"
-        else
-          CHANGED_FILES=""
-          echo "No previous commit found - will skip builds (first run or no git history)"
+
+      - echo "Changed files:"
+      - echo "$CHANGED_FILES"
+
+      # If Dockerfile or requirements changed → rebuild all
+      - if echo "$CHANGED_FILES" | grep -E "components/.*/Dockerfile|requirements.txt" > /dev/null; then
+          echo "Docker or common requirements changed → rebuild all components";
+          REBUILD_ALL=true;
         fi
-      - |
-        # Check if requirements.txt or any Dockerfile changed (rebuild all)
-        if [ -n "$CHANGED_FILES" ]; then
-          if echo "$CHANGED_FILES" | grep -qE "(^requirements\.txt$|components/.*/Dockerfile)"; then
-            echo "requirements.txt or Dockerfile changed - will rebuild all components"
-            echo "REBUILD_ALL=true" > /tmp/build_flags.sh
-            echo "COMPONENTS_TO_BUILD=data_fetcher preprocess train evaluate model_registry" >> /tmp/build_flags.sh
-          else
-            # Check which specific components changed
-            COMPONENTS=("data_fetcher" "preprocess" "train" "evaluate" "model_registry")
-            COMPONENTS_TO_BUILD=""
-            for component in "${COMPONENTS[@]}"; do
-              if echo "$CHANGED_FILES" | grep -qE "^components/${component}/"; then
-                echo "Component ${component} has code changes"
-                COMPONENTS_TO_BUILD="${COMPONENTS_TO_BUILD} ${component}"
-              fi
-            done
-            if [ -n "$COMPONENTS_TO_BUILD" ]; then
-              echo "COMPONENTS_TO_BUILD=${COMPONENTS_TO_BUILD}" >> /tmp/build_flags.sh
+
+      # Per-component change detection
+      - if [ "$REBUILD_ALL" = false ]; then
+          for comp in data_fetcher preprocess train evaluate model_registry; do
+            if echo "$CHANGED_FILES" | grep "components/$comp/" > /dev/null; then
+              COMPONENTS_TO_BUILD="$COMPONENTS_TO_BUILD $comp";
             fi
-          fi
-          
-          # Check if pipeline.py changed
-          if echo "$CHANGED_FILES" | grep -qE "^pipeline\.py$"; then
-            echo "PIPELINE_CHANGED=true" >> /tmp/build_flags.sh
-            echo "pipeline.py changed - will redeploy pipeline"
-          fi
+          done;
         fi
-      - |
-        source /tmp/build_flags.sh
-        echo "=== Build Summary ==="
-        echo "Components to build: ${COMPONENTS_TO_BUILD:-none}"
-        echo "Pipeline changed: ${PIPELINE_CHANGED:-false}"
-        echo "Rebuild all: ${REBUILD_ALL:-false}"
+
+      # Pipeline definition changes
+      - if echo "$CHANGED_FILES" | grep "pipeline/pipeline.py" > /dev/null; then
+          PIPELINE_CHANGED=true;
+        fi
+
+      - echo "Components to rebuild: $COMPONENTS_TO_BUILD"
+      - echo "Pipeline changed: $PIPELINE_CHANGED"
+      - echo "Rebuild all: $REBUILD_ALL"
 
   build:
     commands:
-      - |
-        source /tmp/build_flags.sh
-        if [ -z "$COMPONENTS_TO_BUILD" ] || [ "$COMPONENTS_TO_BUILD" = " " ]; then
-          echo "✅ No component code changes detected - skipping Docker image builds"
-          echo "Using existing images from ECR: ${ECR_REGISTRY}/${REPO_NAME}"
+      - echo "Starting build phase..."
+
+      # Rebuild all components if needed
+      - if [ "$REBUILD_ALL" = true ]; then
+          echo "Rebuilding ALL components...";
+          COMPONENTS_TO_BUILD="data_fetcher preprocess train evaluate model_registry";
+        fi
+
+      # Build only changed components
+      - if [ -n "$COMPONENTS_TO_BUILD" ]; then
+          for comp in $COMPONENTS_TO_BUILD; do
+            echo "Building Docker image for $comp...";
+            docker build -t ${REPO_NAME}-${comp}:latest -f components/$comp/Dockerfile .
+            docker tag ${REPO_NAME}-${comp}:latest ${ECR_REGISTRY}/${REPO_NAME}-${comp}:latest
+            docker push ${ECR_REGISTRY}/${REPO_NAME}-${comp}:latest
+          done;
         else
-          echo "🔨 Building Docker images for changed components..."
-          for component in $COMPONENTS_TO_BUILD; do
-            echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "Building: ${component}"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            IMAGE_URI="${ECR_REGISTRY}/${REPO_NAME}:${component}"
-            docker build -f "./components/${component}/Dockerfile" -t ${component} .
-            docker tag ${component}:latest ${IMAGE_URI}
-            echo "Pushing ${IMAGE_URI}..."
-            docker push ${IMAGE_URI}
-            echo "✅ ${component} image pushed successfully!"
-          done
-          echo ""
-          echo "✅ All changed component images built and pushed"
+          echo "No component changes detected. Skipping Docker build and reusing existing ECR images.";
         fi
-      - echo "Setting up environment variables for pipeline..."
-      - |
-        export SAGEMAKER_ROLE=${SAGEMAKER_ROLE:-arn:aws:iam::269897083978:role/SageMakerExecRole-pro-ai}
-        export S3_BUCKET=${S3_BUCKET:-mlops-data01}
-        export AWS_REGION=${AWS_REGION:-us-east-1}
-        export ECR_REGISTRY="${ECR_REGISTRY}"
-      - |
-        source /tmp/build_flags.sh
-        # Execute pipeline if images were built or pipeline.py changed
-        HAS_COMPONENTS_TO_BUILD=false
-        if [ -n "$COMPONENTS_TO_BUILD" ] && [ "$COMPONENTS_TO_BUILD" != " " ]; then
-          HAS_COMPONENTS_TO_BUILD=true
-        fi
-        
-        if [ "$HAS_COMPONENTS_TO_BUILD" = "true" ] || [ "$PIPELINE_CHANGED" = "true" ]; then
-          echo ""
-          echo "🚀 Triggering SageMaker pipeline..."
-          if [ "$PIPELINE_CHANGED" = "true" ]; then
-            echo "Pipeline definition changed - deploying and executing..."
-            python pipeline.py
-          else
-            echo "Component images updated - executing existing pipeline..."
-            python pipeline.py --execute-only
-          fi
-        else
-          echo ""
-          echo "⏭️  No relevant changes detected - skipping pipeline execution"
-          echo "   (No component code changes and pipeline.py unchanged)"
-        fi
+
+      # Always run pipeline
+      - echo "Running SageMaker Pipeline..."
+      - python pipeline/pipeline.py
 
   post_build:
     commands:
-      - echo "All builds and SageMaker pipeline execution completed."
-      - echo "ECR Registry configured"
-      - echo "Repository - ml-pipeline-components"
+      - echo "Build and pipeline execution completed."
