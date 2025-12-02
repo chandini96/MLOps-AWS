@@ -101,15 +101,21 @@ phases:
         echo "Running SageMaker Pipeline..."
         if [ "$PIPELINE_CHANGED" = "true" ]; then
           echo "Pipeline definition changed - deploying and executing..."
-          python pipeline.py
+          echo "Starting pipeline (fire-and-forget mode to avoid CodeBuild timeout)..."
+          python pipeline.py --no-monitor
         else
           if [ -n "$COMPONENTS_TO_BUILD" ] && [ "$COMPONENTS_TO_BUILD" != " " ]; then
             echo "Component images updated - executing existing pipeline with new images..."
           else
             echo "No component changes - executing existing pipeline with latest ECR images..."
           fi
-          python pipeline.py --execute-only
+          echo "Starting pipeline (fire-and-forget mode to avoid CodeBuild timeout)..."
+          python pipeline.py --execute-only --no-monitor
         fi
+        echo ""
+        echo "✅ Pipeline execution started successfully!"
+        echo "📊 Monitor pipeline execution in SageMaker Console or use:"
+        echo "   python pipeline.py --monitor <EXECUTION_ARN>"
 
   post_build:
     commands:

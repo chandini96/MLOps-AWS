@@ -324,6 +324,8 @@ if __name__ == "__main__":
     parser.add_argument("--poll", type=int, default=30, help="Polling interval in seconds")
     parser.add_argument("--execute-only", action="store_true", 
                        help="Execute existing pipeline without deploying (skip upsert)")
+    parser.add_argument("--no-monitor", action="store_true",
+                       help="Start pipeline execution without monitoring (fire-and-forget)")
     args = parser.parse_args()
 
     if args.monitor:
@@ -331,14 +333,24 @@ if __name__ == "__main__":
     elif args.execute_only:
         # Execute existing pipeline without deploying
         exec_obj = start_existing_pipeline(pipeline.name)
-        # Monitor execution
-        monitor_execution(exec_obj.arn, poll_interval=args.poll)
+        if not args.no_monitor:
+            # Monitor execution
+            monitor_execution(exec_obj.arn, poll_interval=args.poll)
+        else:
+            print(f"\n✅ Pipeline execution started (not monitoring)")
+            print(f"📋 Execution ARN: {exec_obj.arn}")
+            print(f"🔗 Monitor in console: https://console.aws.amazon.com/sagemaker/home?region={REGION}#/pipelines")
     else:
         # Default behavior: Deploy and start pipeline execution
         # Deploy pipeline (creates/updates definition)
         deploy_pipeline()
         # Start execution
         exec_obj = start_execution()
-        # Monitor execution
-        monitor_execution(exec_obj.arn, poll_interval=args.poll)
+        if not args.no_monitor:
+            # Monitor execution
+            monitor_execution(exec_obj.arn, poll_interval=args.poll)
+        else:
+            print(f"\n✅ Pipeline execution started (not monitoring)")
+            print(f"📋 Execution ARN: {exec_obj.arn}")
+            print(f"🔗 Monitor in console: https://console.aws.amazon.com/sagemaker/home?region={REGION}#/pipelines")
    
